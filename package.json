@@ -1,0 +1,29 @@
+{
+  "name": "studyforge-prototype",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "description": "StudyForge: Turn study material into adaptive interactive learning experiences",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "study",
+    "learning",
+    "ai",
+    "education",
+    "interactive",
+    "groq",
+    "anthropic",
+    "claude"
+  ],
+  "author": "StudyForge",
+  "license": "MIT"
+}
