@@ -114,7 +114,7 @@ export async function findUserByEmail(email) {
   if (!email) return null;
   const supabaseClient = await getCollection('users');
   if (supabaseClient) {
-    const { data, error } = await supabaseClient.from('users').select('*').eq('email', email).single();
+    const { data, error } = await supabaseClient.from('users').select('*').eq('email', email).maybeSingle();
     if (!error) return data;
     if (error.code === 'PGRST116') return null;
     console.error('Supabase findUserByEmail error:', error.message || error);
@@ -132,7 +132,7 @@ export async function findUserById(id) {
   if (!id) return null;
   const supabaseClient = await getCollection('users');
   if (supabaseClient) {
-    const { data, error } = await supabaseClient.from('users').select('*').eq('id', id).single();
+    const { data, error } = await supabaseClient.from('users').select('*').eq('id', id).maybeSingle();
     if (!error) return data;
     if (error.code === 'PGRST116') return null;
     console.error('Supabase findUserById error:', error.message || error);
