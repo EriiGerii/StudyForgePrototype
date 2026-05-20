@@ -151,10 +151,10 @@ export async function createUser(user) {
   if (supabaseClient) {
     const { error } = await supabaseClient.from('users').insert([user]);
     if (!error) return user;
-    console.error('Supabase createUser error:', error.message || error);
-  if (process.env.VERCEL) {
-    throw new Error('Supabase is not configured. Set SUPABASE_URL and SUPABASE_KEY env vars.');
-  }
+    console.error('Supabase createUser REAL error:', JSON.stringify(error));
+    if (process.env.VERCEL) {
+      throw new Error('Supabase is not configured. Set SUPABASE_URL and SUPABASE_KEY env vars.');
+    }
     throw new Error('Failed to create user in Supabase.');
   }
 
