@@ -120,6 +120,9 @@ export async function findUserByEmail(email) {
     return null;
   }
 
+  if (process.env.VERCEL) {
+    throw new Error('Supabase is not configured. Set SUPABASE_URL and SUPABASE_KEY env vars.');
+  }
   const db = readLocalDb();
   return db.users.find(user => user.email === email) || null;
 }
@@ -135,6 +138,9 @@ export async function findUserById(id) {
     return null;
   }
 
+  if (process.env.VERCEL) {
+    throw new Error('Supabase is not configured. Set SUPABASE_URL and SUPABASE_KEY env vars.');
+  }
   const db = readLocalDb();
   return db.users.find(user => user.id === id) || null;
 }
@@ -145,6 +151,9 @@ export async function createUser(user) {
     const { error } = await supabaseClient.from('users').insert([user]);
     if (!error) return user;
     console.error('Supabase createUser error:', error.message || error);
+  if (process.env.VERCEL) {
+    throw new Error('Supabase is not configured. Set SUPABASE_URL and SUPABASE_KEY env vars.');
+  }
     throw new Error('Failed to create user in Supabase.');
   }
 
@@ -162,6 +171,9 @@ export async function findSessionByToken(token) {
     if (!error) return data;
     if (error.code === 'PGRST116') return null;
     console.error('Supabase findSessionByToken error:', error.message || error);
+  if (process.env.VERCEL) {
+    return null;
+  }
     return null;
   }
 
@@ -182,6 +194,9 @@ export async function createSession(userId) {
     const { error: insertError } = await supabaseClient.from('sessions').insert([session]);
     if (!insertError) return session;
     console.error('Supabase createSession insert error:', insertError.message || insertError);
+  if (process.env.VERCEL) {
+    throw new Error('Supabase is not configured. Set SUPABASE_URL and SUPABASE_KEY env vars.');
+  }
     throw new Error('Failed to create session in Supabase.');
   }
 
@@ -198,6 +213,9 @@ export async function deleteSession(token) {
     const { error } = await supabaseClient.from('sessions').delete().eq('token', token);
     if (!error) return;
     console.error('Supabase deleteSession error:', error.message || error);
+  if (process.env.VERCEL) {
+    return;
+  }
     return;
   }
 
@@ -209,6 +227,9 @@ export async function deleteSession(token) {
 export async function createHistory(entry) {
   const supabaseClient = await getCollection('histories');
   if (supabaseClient) {
+  if (process.env.VERCEL) {
+    throw new Error('Supabase is not configured. Set SUPABASE_URL and SUPABASE_KEY env vars.');
+  }
     const { data, error } = await supabaseClient.from('histories').insert([entry]).select().single();
     if (!error) return data || entry;
     console.error('Supabase createHistory error:', error.message || error);
@@ -234,6 +255,9 @@ export async function getHistoryList(userId) {
     return [];
   }
 
+  if (process.env.VERCEL) {
+    return [];
+  }
   const db = readLocalDb();
   return db.histories
     .filter(item => item.userId === userId)
@@ -249,6 +273,9 @@ export async function findHistoryById(id) {
     if (error && error.code !== 'PGRST116') console.error('Supabase findHistoryById error:', error.message || error);
   }
 
+  if (process.env.VERCEL) {
+    return null;
+  }
   const db = readLocalDb();
   return db.histories.find(item => item.id === id) || null;
 }
