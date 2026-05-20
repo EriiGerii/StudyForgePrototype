@@ -2,16 +2,19 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { MongoClient } from 'mongodb';
+import { createClient } from '@supabase/supabase-js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const MONGODB_URI = process.env.MONGODB_URI;
-const MONGODB_DBNAME = process.env.MONGODB_DB || 'studyforge_prototype';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const LOCAL_DATA_DIR = path.join(__dirname, '..', 'data');
 const LOCAL_DB_PATH = path.join(LOCAL_DATA_DIR, 'db.json');
-let cachedClient = null;
-let cachedDb = null;
+const supabase = SUPABASE_URL && SUPABASE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+    })
+  : null;
 
 export function sendJson(res, body, status = 200) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
@@ -74,19 +77,8 @@ export function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(expected, 'hex'));
 }
 
-async function getMongoDb() {
-  if (!MONGODB_URI) {
-    return null;
-  }
-  if (cachedDb) {
-    return cachedDb;
-  }
-  if (!cachedClient) {
-    cachedClient = new MongoClient(MONGODB_URI);
-    await cachedClient.connect();
-  }
-  cachedDb = cachedClient.db(MONGODB_DBNAME);
-  return cachedDb;
+async function getSupabaseClient() {
+  return supabase;
 }
 
 function ensureLocalDb() {
@@ -114,18 +106,18 @@ function writeLocalDb(db) {
 }
 
 async function getCollection(collectionName) {
-  const db = await getMongoDb();
-  if (db) {
-    return db.collection(collectionName);
-  }
-  return null;
+  return await getSupabaseClient();
 }
 
 export async function findUserByEmail(email) {
   if (!email) return null;
-  const collection = await getCollection('users');
-  if (collection) {
-    return await collection.findOne({ email });
+  const supabaseClient = await getCollection('users');
+  if (supabaseClient) {
+    const { data, error } = await supabaseClient.from('users').select('*').eq('email', email).single();
+    if (!error) return data;
+    if (error.code === 'PGRST116') return null;
+    console.error('Supabase findUserByEmail error:', error.message || error);
+    return null;
   }
 
   const db = readLocalDb();
@@ -134,9 +126,13 @@ export async function findUserByEmail(email) {
 
 export async function findUserById(id) {
   if (!id) return null;
-  const collection = await getCollection('users');
-  if (collection) {
-    return await collection.findOne({ id });
+  const supabaseClient = await getCollection('users');
+  if (supabaseClient) {
+    const { data, error } = await supabaseClient.from('users').select('*').eq('id', id).single();
+    if (!error) return data;
+    if (error.code === 'PGRST116') return null;
+    console.error('Supabase findUserById error:', error.message || error);
+    return null;
   }
 
   const db = readLocalDb();
@@ -144,10 +140,12 @@ export async function findUserById(id) {
 }
 
 export async function createUser(user) {
-  const collection = await getCollection('users');
-  if (collection) {
-    await collection.insertOne(user);
-    return user;
+  const supabaseClient = await getCollection('users');
+  if (supabaseClient) {
+    const { error } = await supabaseClient.from('users').insert([user]);
+    if (!error) return user;
+    console.error('Supabase createUser error:', error.message || error);
+    throw new Error('Failed to create user in Supabase.');
   }
 
   const db = readLocalDb();
@@ -158,9 +156,13 @@ export async function createUser(user) {
 
 export async function findSessionByToken(token) {
   if (!token) return null;
-  const collection = await getCollection('sessions');
-  if (collection) {
-    return await collection.findOne({ token });
+  const supabaseClient = await getCollection('sessions');
+  if (supabaseClient) {
+    const { data, error } = await supabaseClient.from('sessions').select('*').eq('token', token).single();
+    if (!error) return data;
+    if (error.code === 'PGRST116') return null;
+    console.error('Supabase findSessionByToken error:', error.message || error);
+    return null;
   }
 
   const db = readLocalDb();
@@ -173,11 +175,14 @@ export async function createSession(userId) {
     userId,
     createdAt: new Date().toISOString()
   };
-  const collection = await getCollection('sessions');
-  if (collection) {
-    await collection.deleteMany({ userId });
-    await collection.insertOne(session);
-    return session;
+  const supabaseClient = await getCollection('sessions');
+  if (supabaseClient) {
+    const { error: deleteError } = await supabaseClient.from('sessions').delete().eq('userId', userId);
+    if (deleteError && deleteError.code !== 'PGRST116') console.error('Supabase createSession delete error:', deleteError.message || deleteError);
+    const { error: insertError } = await supabaseClient.from('sessions').insert([session]);
+    if (!insertError) return session;
+    console.error('Supabase createSession insert error:', insertError.message || insertError);
+    throw new Error('Failed to create session in Supabase.');
   }
 
   const db = readLocalDb();
@@ -188,9 +193,11 @@ export async function createSession(userId) {
 }
 
 export async function deleteSession(token) {
-  const collection = await getCollection('sessions');
-  if (collection) {
-    await collection.deleteOne({ token });
+  const supabaseClient = await getCollection('sessions');
+  if (supabaseClient) {
+    const { error } = await supabaseClient.from('sessions').delete().eq('token', token);
+    if (!error) return;
+    console.error('Supabase deleteSession error:', error.message || error);
     return;
   }
 
@@ -200,10 +207,12 @@ export async function deleteSession(token) {
 }
 
 export async function createHistory(entry) {
-  const collection = await getCollection('histories');
-  if (collection) {
-    await collection.insertOne(entry);
-    return entry;
+  const supabaseClient = await getCollection('histories');
+  if (supabaseClient) {
+    const { data, error } = await supabaseClient.from('histories').insert([entry]).select().single();
+    if (!error) return data || entry;
+    console.error('Supabase createHistory error:', error.message || error);
+    throw new Error('Failed to create history entry in Supabase.');
   }
 
   const db = readLocalDb();
@@ -213,12 +222,16 @@ export async function createHistory(entry) {
 }
 
 export async function getHistoryList(userId) {
-  const collection = await getCollection('histories');
-  if (collection) {
-    return await collection
-      .find({ userId })
-      .sort({ createdAt: -1 })
-      .toArray();
+  const supabaseClient = await getCollection('histories');
+  if (supabaseClient) {
+    const { data, error } = await supabaseClient
+      .from('histories')
+      .select('*')
+      .eq('userId', userId)
+      .order('createdAt', { ascending: false });
+    if (!error) return data || [];
+    console.error('Supabase getHistoryList error:', error.message || error);
+    return [];
   }
 
   const db = readLocalDb();
@@ -229,9 +242,11 @@ export async function getHistoryList(userId) {
 
 export async function findHistoryById(id) {
   if (!id) return null;
-  const collection = await getCollection('histories');
-  if (collection) {
-    return await collection.findOne({ id });
+  const supabaseClient = await getCollection('histories');
+  if (supabaseClient) {
+    const { data, error } = await supabaseClient.from('histories').select('*').eq('id', id).single();
+    if (!error && data) return data;
+    if (error && error.code !== 'PGRST116') console.error('Supabase findHistoryById error:', error.message || error);
   }
 
   const db = readLocalDb();
