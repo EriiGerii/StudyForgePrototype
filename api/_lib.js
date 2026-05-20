@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
+console.log('ENV CHECK:', !!SUPABASE_URL, !!SUPABASE_KEY, Object.keys(process.env).filter(k => k.includes('SUPA')));
 const LOCAL_DATA_DIR = path.join(__dirname, '..', 'data');
 const LOCAL_DB_PATH = path.join(LOCAL_DATA_DIR, 'db.json');
 const supabase = SUPABASE_URL && SUPABASE_KEY
