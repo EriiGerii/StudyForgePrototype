@@ -233,6 +233,120 @@ REQUIREMENTS:
   }
 });
 
+app.post('/api/panel', requireAuth, async (req, res) => {
+  const question = String(req.body?.question || '').replace(/\s+/g, ' ').trim().slice(0, 800);
+  const subject = String(req.body?.subject || 'the study material').slice(0, 120);
+  const sourceText = String(req.body?.sourceText || '').replace(/\s+/g, ' ').trim().slice(0, 8000);
+  const summaryPoints = Array.isArray(req.body?.summaryPoints) ? req.body.summaryPoints.slice(0, 10) : [];
+  const sourceSentences = Array.isArray(req.body?.sourceSentences) ? req.body.sourceSentences.slice(0, 12) : [];
+  const experts = Array.isArray(req.body?.experts) ? req.body.experts.slice(0, 4) : [];
+
+  if (!question) return res.status(400).json({ error: 'Ask a question first.' });
+
+  const context = buildPanelContext({ sourceText, summaryPoints, sourceSentences });
+  const fallbackResponses = buildPanelFallbackResponses(question, subject, context, experts);
+  const useGroq = Boolean(GROQ_API_KEY);
+  const apiKey = useGroq ? GROQ_API_KEY : ANTHROPIC_API_KEY;
+
+  if (!apiKey) {
+    return res.json({ fallback: true, responses: fallbackResponses });
+  }
+
+  const expertList = experts.length ? experts : [
+    { name: 'Ari', role: 'Domain Professional' },
+    { name: 'Prof. Rivera', role: 'Professor' },
+    { name: 'Maya', role: 'Logical Beginner' },
+    { name: 'Sam', role: 'Simple Explainer' }
+  ];
+
+  const prompt = `You are the StudyForge Expert Panel. Return ONLY valid JSON.
+
+Student question:
+"${question}"
+
+Subject:
+"${subject}"
+
+PDF / uploaded material context:
+"""
+${context}
+"""
+
+Panel experts:
+${expertList.map((expert, idx) => `${idx}: ${expert.name || `Expert ${idx + 1}`} - ${expert.role || 'Expert'}`).join('\n')}
+
+Return exactly:
+{
+  "responses": [
+    {"expertIndex": 0, "response": "answer"},
+    {"expertIndex": 1, "response": "answer"},
+    {"expertIndex": 2, "response": "answer"},
+    {"expertIndex": 3, "response": "answer"}
+  ]
+}
+
+Rules:
+- Main focus must be the PDF/uploaded material. Start each answer by grounding it in something from the material.
+- If the PDF context is thin, add relevant broader background knowledge from your general knowledge, clearly separating it with phrases like "Broader context:" or "Connected idea:".
+- Do not claim you searched the live internet. Do not invent exact quotes, page numbers, sources, dates, or statistics unless they are in the provided material.
+- Each expert should answer the same question with the same core meaning but different wording, reasoning style, and emphasis.
+- Domain professional: practical, strategic, real-world implications.
+- Professor: structured explanation using claim, evidence, and significance.
+- Logical beginner: asks/answers the simple confusion directly.
+- Simple explainer: clear and short, but not childish.
+- 80-140 words per response.
+- Avoid repeating the same sentence structure across experts.`;
+
+  try {
+    let response;
+    if (useGroq || (!ANTHROPIC_API_KEY && GROQ_API_KEY)) {
+      response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GROQ_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.8,
+          max_tokens: 1400,
+          response_format: { type: 'json_object' }
+        })
+      });
+    } else {
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-sonnet-20241022',
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 1400,
+          temperature: 0.8
+        })
+      });
+    }
+
+    const json = await response.json();
+    if (!response.ok) {
+      console.error('Panel API Error:', json);
+      return res.json({ fallback: true, warning: json.error?.message || 'AI backend error', responses: fallbackResponses });
+    }
+
+    const rawText = json.choices?.[0]?.message?.content || json.content?.[0]?.text || '';
+    const parsed = JSON.parse(extractJson(rawText));
+    const responses = normalizePanelResponses(parsed.responses, fallbackResponses);
+    return res.json({ fallback: false, responses });
+  } catch (error) {
+    console.error(error);
+    return res.json({ fallback: true, warning: error.message, responses: fallbackResponses });
+  }
+});
+
 function loadEnvFile() {
   const path = '.env';
   if (!fs.existsSync(path)) return;
@@ -358,6 +472,97 @@ function normalizeStudyData(value, sourceText) {
   data.mini_games = Array.isArray(data.mini_games) && data.mini_games.length ? data.mini_games : fallback.mini_games;
   data.sourceSentences = Array.isArray(data.sourceSentences) && data.sourceSentences.length ? data.sourceSentences : fallback.sourceSentences;
   return data;
+}
+
+function buildPanelContext({ sourceText, summaryPoints, sourceSentences }) {
+  const parts = [];
+  if (sourceSentences.length) {
+    parts.push('Source sentences:\n' + sourceSentences.map(sentence => '- ' + String(sentence).slice(0, 500)).join('\n'));
+  }
+  if (summaryPoints.length) {
+    parts.push('Summary points:\n' + summaryPoints.map(point => '- ' + String(point?.heading || 'Point') + ': ' + String(point?.detail || '').slice(0, 500)).join('\n'));
+  }
+  if (sourceText) parts.push('Source excerpt:\n' + sourceText.slice(0, 5000));
+  return parts.join('\n\n').slice(0, 7000) || 'No detailed source text was provided.';
+}
+
+function normalizePanelResponses(value, fallbackResponses) {
+  const list = Array.isArray(value) ? value : [];
+  const responses = fallbackResponses.map((fallback, idx) => {
+    const match = list.find(item => Number(item?.expertIndex) === idx) || list[idx] || {};
+    return {
+      expertIndex: idx,
+      response: String(match.response || fallback.response || '').replace(/\s+/g, ' ').trim()
+    };
+  });
+  return responses.map((item, idx) => item.response ? item : fallbackResponses[idx]);
+}
+
+function buildPanelFallbackResponses(question, subject, context, experts) {
+  const focus = findPanelFocus(question, context, subject);
+  const broader = inferBroaderContext(subject, question, focus);
+  const names = experts.length ? experts : [
+    { role: 'Domain Professional' },
+    { role: 'Professor' },
+    { role: 'Logical Beginner' },
+    { role: 'Simple Explainer' }
+  ];
+  return [
+    {
+      expertIndex: 0,
+      response: `From the material, the useful anchor is ${focus.heading}: ${focus.detail} Broader context: ${broader} As a ${names[0]?.role || 'domain professional'}, I would connect the PDF point to what changes in practice: who acts, what pressure increases, and what consequence follows.`
+    },
+    {
+      expertIndex: 1,
+      response: `A strong academic answer would start with the PDF evidence: ${focus.detail} The claim is that ${focus.heading} matters because it explains part of ${subject}. Connected idea: ${broader} So your answer should separate the material's direct statement from the extra background that helps explain why it matters.`
+    },
+    {
+      expertIndex: 2,
+      response: `I would simplify it like this: the PDF gives us one clear clue, which is ${focus.heading}. It says: ${focus.detail} If that feels too small, the bigger related idea is this: ${broader} So the answer is not only "what does the PDF say?" but also "what does that point help us understand?"`
+    },
+    {
+      expertIndex: 3,
+      response: `Short version: the PDF points to ${focus.heading}. The important part is: ${focus.detail} A related background idea is that ${broader} That means you can answer from the PDF first, then add outside explanation as support, as long as you do not pretend the outside part came from the PDF.`
+    }
+  ];
+}
+
+function findPanelFocus(question, context, subject) {
+  const words = new Set(String(question).toLowerCase().split(/[^a-z0-9]+/).filter(word => word.length > 3));
+  const sentences = String(context).split(/(?<=[.!?])\s+|\n+/).map(sentence => sentence.replace(/^[-\s]+/, '').trim()).filter(sentence => sentence.length > 30);
+  let best = sentences[0] || String(subject || 'the topic');
+  let bestScore = -1;
+  sentences.forEach(sentence => {
+    const lower = sentence.toLowerCase();
+    let score = 0;
+    words.forEach(word => { if (lower.includes(word)) score += 1; });
+    if (score > bestScore) {
+      bestScore = score;
+      best = sentence;
+    }
+  });
+  const heading = best.split(':')[0].replace(/^Summary points|^Source sentences/i, '').trim() || subject || 'the topic';
+  return { heading, detail: best.slice(0, 420) };
+}
+
+function inferBroaderContext(subject, question, focus) {
+  const joined = `${subject} ${question} ${focus.heading} ${focus.detail}`.toLowerCase();
+  if (/war|hitler|germany|allies|axis|nazi|invasion|treaty|battle|appeasement|poland|britain|france|conflict/.test(joined)) {
+    return 'historical events usually become clearer when you connect immediate decisions to alliances, resources, geography, leadership choices, and long-term consequences.';
+  }
+  if (/chem|atom|molecule|acid|base|reaction|element|compound/.test(joined)) {
+    return 'chemistry ideas usually make more sense when the visible result is connected to particles, bonding, energy, and reaction conditions.';
+  }
+  if (/bio|cell|organ|dna|gene|evolution|plant|animal/.test(joined)) {
+    return 'biology explanations often connect structure to function, and then connect that function to survival, regulation, or adaptation.';
+  }
+  if (/math|algebra|geometry|equation|function|calculus/.test(joined)) {
+    return 'math concepts are easier to use when you connect the rule to the pattern it describes and the problem type it solves.';
+  }
+  if (/econom|market|money|inflation|trade|business/.test(joined)) {
+    return 'economic topics often need both the direct mechanism and the incentives or trade-offs that make people respond in a certain way.';
+  }
+  return 'a thin note from the PDF can be expanded by connecting it to causes, effects, examples, and why the idea matters in the wider topic.';
 }
 
 app.get('*', (req, res) => {
